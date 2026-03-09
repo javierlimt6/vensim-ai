@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
+
+type DiagramType = "SFD" | "CLD";
 
 // ── Example prompts (from the paper) ────────────────────────────────────
 const EXAMPLES = [
@@ -130,6 +132,21 @@ const SettingsIcon = () => (
   </svg>
 );
 
+const ImageIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <polyline points="21 15 16 10 5 21" />
+  </svg>
+);
+
+const XIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
 // ── Page Component ──────────────────────────────────────────────────────
 export default function Home() {
   const [description, setDescription] = useState("");
@@ -137,42 +154,130 @@ export default function Home() {
   const [finalTime, setFinalTime] = useState("100");
   const [timeStep, setTimeStep] = useState("1");
   const [timeUnits, setTimeUnits] = useState("Year");
+  const [diagramType, setDiagramType] = useState<DiagramType>("SFD");
   const [mdlOutput, setMdlOutput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showToast, setShowToast] = useState(false);
 
+  // Progress state for SSE pipeline
+  const [progressStep, setProgressStep] = useState(0);
+  const [progressTotal, setProgressTotal] = useState(0);
+  const [progressMessage, setProgressMessage] = useState("");
+  const [progressDetail, setProgressDetail] = useState("");
+
+  // Image upload state
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [imageMimeType, setImageMimeType] = useState<string>("image/png");
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImageFile = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    setImageMimeType(file.type);
+    setImagePreviewUrl(URL.createObjectURL(file));
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Strip the data:image/...;base64, prefix
+      const base64 = result.split(",")[1];
+      setImageBase64(base64);
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const handleRemoveImage = useCallback(() => {
+    setImageBase64(null);
+    setImageMimeType("image/png");
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImagePreviewUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, [imagePreviewUrl]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleImageFile(file);
+  }, [handleImageFile]);
+
   const handleGenerate = useCallback(async () => {
-    if (!description.trim()) return;
+    if (!description.trim() && !imageBase64) return;
     setLoading(true);
     setError("");
     setMdlOutput("");
+    setProgressStep(0);
+    setProgressTotal(0);
+    setProgressMessage("Starting...");
+    setProgressDetail("");
 
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          description,
+          description: description || undefined,
           initialTime: parseFloat(initialTime) || 0,
           finalTime: parseFloat(finalTime) || 100,
           timeStep: parseFloat(timeStep) || 1,
           timeUnits,
+          diagramType,
+          imageBase64: imageBase64 || undefined,
+          imageMimeType: imageBase64 ? imageMimeType : undefined,
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Generation failed.");
-      } else {
-        setMdlOutput(data.mdl);
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      if (!reader) {
+        setError("Failed to read response stream.");
+        setLoading(false);
+        return;
+      }
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "progress") {
+                setProgressStep(event.step);
+                setProgressTotal(event.totalSteps);
+                setProgressMessage(event.message);
+                setProgressDetail(event.detail || "");
+              } else if (event.type === "done") {
+                setMdlOutput(event.mdl);
+              } else if (event.type === "error") {
+                setError(event.error);
+              }
+            } catch {
+              // skip malformed events
+            }
+          }
+        }
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Network error.");
     } finally {
       setLoading(false);
+      setProgressStep(0);
+      setProgressTotal(0);
+      setProgressMessage("");
+      setProgressDetail("");
     }
-  }, [description, initialTime, finalTime, timeStep, timeUnits]);
+  }, [description, initialTime, finalTime, timeStep, timeUnits, diagramType, imageBase64, imageMimeType]);
 
   const handleDownload = useCallback(() => {
     if (!mdlOutput) return;
@@ -180,7 +285,6 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    // Generate a filename from the first stock-like word or use default
     const nameMatch = description.match(/model(?:ing)?\s+(?:the\s+)?(\w+)/i);
     const name = nameMatch ? nameMatch[1].toLowerCase() : "model";
     a.download = `${name}_vensim.mdl`;
@@ -210,6 +314,8 @@ export default function Home() {
     setError("");
   };
 
+  const canGenerate = description.trim().length > 0 || !!imageBase64;
+
   return (
     <div className="app-container">
       {/* Header */}
@@ -220,24 +326,101 @@ export default function Home() {
         </div>
         <h1>Vensim AI</h1>
         <p>
-          Transform natural language descriptions into complete Vensim simulation
+          Transform natural language descriptions or diagram images into complete Vensim simulation
           models. Describe your system and download a ready-to-use <strong>.mdl</strong> file.
         </p>
       </header>
 
       {/* Main Card */}
       <div className="glass-card" style={{ padding: "28px" }}>
+        {/* Diagram Type Selector */}
+        <div className="section">
+          <label className="section-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 5h16M4 12h16M4 19h16" />
+            </svg>
+            Diagram Type
+          </label>
+          <div className="diagram-type-toggle">
+            <button
+              className={`toggle-btn ${diagramType === "SFD" ? "active" : ""}`}
+              onClick={() => setDiagramType("SFD")}
+            >
+              <span className="toggle-icon">📊</span>
+              <span className="toggle-label">Stock & Flow (SFD)</span>
+              <span className="toggle-desc">Stocks, flows, auxiliaries</span>
+            </button>
+            <button
+              className={`toggle-btn ${diagramType === "CLD" ? "active" : ""}`}
+              onClick={() => setDiagramType("CLD")}
+            >
+              <span className="toggle-icon">🔄</span>
+              <span className="toggle-label">Causal Loop (CLD)</span>
+              <span className="toggle-desc">Feedback loops & polarity</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Image Upload */}
+        <div className="section">
+          <label className="section-label">
+            <ImageIcon />
+            Upload Diagram Image
+            <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "var(--text-muted)", marginLeft: 4 }}>(optional)</span>
+          </label>
+          {imagePreviewUrl ? (
+            <div className="image-preview-container">
+              <img src={imagePreviewUrl} alt="Uploaded diagram" className="image-preview" />
+              <button className="image-remove-btn" onClick={handleRemoveImage} title="Remove image">
+                <XIcon />
+              </button>
+              <div className="image-preview-badge">
+                {diagramType === "CLD" ? "CLD" : "SFD"} diagram uploaded
+              </div>
+            </div>
+          ) : (
+            <div
+              className={`upload-zone ${dragOver ? "drag-over" : ""}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+            >
+              <div className="upload-zone-icon">
+                <ImageIcon />
+              </div>
+              <div className="upload-zone-text">
+                Drop a diagram image here or <span className="upload-zone-link">browse files</span>
+              </div>
+              <div className="upload-zone-hint">PNG, JPG, or WEBP • The AI will parse and recreate this diagram</div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImageFile(file);
+                }}
+              />
+            </div>
+          )}
+        </div>
+
         {/* Description Input */}
         <div className="section">
           <label className="section-label" htmlFor="system-description">
             <FileIcon />
-            System Description
+            {imageBase64 ? "Additional Context" : "System Description"}
+            {imageBase64 && <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "var(--text-muted)", marginLeft: 4 }}>(optional — adds detail to the image)</span>}
           </label>
           <div className="textarea-wrapper">
             <textarea
               id="system-description"
               className="description-textarea"
-              placeholder="Describe the system you want to model. Include stocks, flows, parameters, initial values, and relationships between variables..."
+              placeholder={imageBase64
+                ? "Optionally add additional context or instructions for interpreting the uploaded diagram..."
+                : "Describe the system you want to model. Include stocks, flows, parameters, initial values, and relationships between variables..."}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
@@ -325,7 +508,7 @@ export default function Home() {
           id="generate-btn"
           className="generate-btn"
           onClick={handleGenerate}
-          disabled={loading || !description.trim()}
+          disabled={loading || !canGenerate}
         >
           {loading ? (
             <>
@@ -340,10 +523,34 @@ export default function Home() {
           ) : (
             <>
               <SparkleIcon />
-              Generate Vensim Model
+              {imageBase64 ? "Generate from Diagram" : "Generate Vensim Model"}
             </>
           )}
         </button>
+
+        {/* Progress Bar */}
+        {loading && progressTotal > 0 && (
+          <div className="progress-container">
+            <div className="progress-bar-track">
+              <div
+                className="progress-bar-fill"
+                style={{ width: `${(progressStep / progressTotal) * 100}%` }}
+              />
+            </div>
+            <div className="progress-steps">
+              <span className="progress-step-label">
+                Step {progressStep} of {progressTotal}
+              </span>
+              <span className="progress-percentage">
+                {Math.round((progressStep / progressTotal) * 100)}%
+              </span>
+            </div>
+            <div className="progress-message">{progressMessage}</div>
+            {progressDetail && (
+              <div className="progress-detail">{progressDetail}</div>
+            )}
+          </div>
+        )}
 
         {/* Error Banner */}
         {error && (
