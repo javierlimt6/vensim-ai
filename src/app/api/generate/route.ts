@@ -4,7 +4,6 @@ import {
   type GenerateOptions,
 } from "@/lib/mdl-format";
 
-export const runtime = 'edge';
 export const maxDuration = 120;
 
 // Helper: strip <think>...</think> blocks from thinking models
