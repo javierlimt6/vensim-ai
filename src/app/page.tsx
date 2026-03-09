@@ -322,13 +322,23 @@ export default function Home() {
       <header className="header">
         <div className="header-badge">
           <SparkleIcon />
-          Powered by DAVID© Methodology & Gemini AI
+          Powered by DAVID© Methodology & Qwen AI
         </div>
         <h1>Vensim AI</h1>
         <p>
           Transform natural language descriptions or diagram images into complete Vensim simulation
           models. Describe your system and download a ready-to-use <strong>.mdl</strong> file.
         </p>
+        <div className="disclaimers">
+          <div className="disclaimer-item">
+            <span className="disclaimer-icon">⚠️</span>
+            <span>This model is <strong>not yet fine-tuned</strong> and is currently in <strong>beta</strong>. Outputs may contain errors and should be verified.</span>
+          </div>
+          <div className="disclaimer-item">
+            <span className="disclaimer-icon">🎨</span>
+            <span>The UI/UX is vibe-coded AI slop and is <strong>not representative</strong> of my actual coding abilities.</span>
+          </div>
+        </div>
       </header>
 
       {/* Main Card */}
@@ -598,13 +608,19 @@ export default function Home() {
         <p>
           Inspired by the{" "}
           <a
-            href="https://youtu.be/t1yKiHKLBE8"
+            href="https://proceedings.systemdynamics.org/2025/papers/P1028.pdf"
             target="_blank"
             rel="noopener noreferrer"
           >
             DAVID© (Draw A Vensim Initial Draft)
           </a>{" "}
           methodology by Martín-García, Campuzano-Bolarín &amp; López-López.
+        </p>
+        <p className="footer-author">
+          Built by{" "}
+          <a href="https://javlim.dev" target="_blank" rel="noopener noreferrer">
+            Javier Lim
+          </a>
         </p>
       </footer>
 

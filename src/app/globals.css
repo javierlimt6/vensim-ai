@@ -132,6 +132,39 @@ body::before {
   line-height: 1.6;
 }
 
+.disclaimers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.disclaimer-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.2);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.disclaimer-item strong {
+  color: var(--text-primary);
+}
+
+.disclaimer-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
 /* Glass Card */
 .glass-card {
   background: var(--bg-card);
@@ -568,6 +601,11 @@ body::before {
 
 .footer a:hover {
   color: var(--accent-blue);
+}
+
+.footer-author {
+  margin-top: 6px;
+  font-size: 12px;
 }
 
 /* Copy toast */
